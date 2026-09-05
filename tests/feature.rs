@@ -61,6 +61,29 @@ rgtest!(personal_default_heading, |dir: Dir, mut cmd: TestCommand| {
     );
 });
 
+// The personal default is intentionally reversible: an explicit
+// --no-heading must restore the upstream file:line:text shape.
+#[cfg(feature = "personal-default-heading")]
+rgtest!(personal_heading_override, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("alpha.rs", "needle\n");
+    dir.create("beta.rs", "needle\n");
+
+    let got = cmd
+        .arg("--no-heading")
+        .arg("-n")
+        .arg("needle")
+        .arg("*.rs")
+        .stdout();
+    assert!(
+        got.contains("alpha.rs:1:needle") && got.contains("beta.rs:1:needle"),
+        "explicit --no-heading did not restore file:line:text: {got:?}"
+    );
+    assert!(
+        !got.contains("alpha.rs\n1:needle") && !got.contains("beta.rs\n1:needle"),
+        "explicit --no-heading still emitted grouped headings: {got:?}"
+    );
+});
+
 // See: https://github.com/BurntSushi/ripgrep/issues/1
 rgtest!(f1_sjis, |dir: Dir, mut cmd: TestCommand| {
     dir.create_bytes(
