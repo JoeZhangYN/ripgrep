@@ -76,6 +76,9 @@ walkdir = "2"
 
 [features]
 pcre2 = ["grep/pcre2"]
+# Personal distribution policy: grouped output is enabled by default even
+# when stdout is redirected. Explicit --no-heading still wins.
+personal-default-heading = []
 # This provides opt-in support for indexing. This is currently in active
 # development and may have very serious bugs. Use at your own risk.
 unstable-index = ["dep:grep-index"]

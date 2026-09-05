@@ -4,7 +4,8 @@ Provides the definition of high level arguments from CLI flags.
 
 use std::{
     collections::HashSet,
-    path::{Path, PathBuf},
+    fs,
+    path::{Component, Path, PathBuf},
 };
 
 use {
@@ -169,7 +170,14 @@ impl HiArgs {
         };
         let column = low.column.unwrap_or(low.vimgrep);
         let heading = match low.heading {
-            None => !low.vimgrep && state.is_terminal_stdout,
+            // The personal build can make grouped output the default even
+            // when stdout is redirected. The upstream default remains
+            // terminal-sensitive unless the caller passes --heading.
+            None => {
+                !low.vimgrep
+                    && (cfg!(feature = "personal-default-heading")
+                        || state.is_terminal_stdout)
+            }
             Some(false) => false,
             Some(true) => !low.vimgrep,
         };
@@ -1116,14 +1124,15 @@ impl Paths {
 
         let mut paths = Vec::with_capacity(low.positional.len());
         for osarg in low.positional.drain(..) {
-            let path = PathBuf::from(osarg);
-            if state.stdin_consumed && path == Path::new("-") {
-                anyhow::bail!(
-                    "error: attempted to read patterns from stdin \
-                     while also searching stdin",
-                );
+            for path in expand_path_glob(&PathBuf::from(osarg), &state.cwd) {
+                if state.stdin_consumed && path == Path::new("-") {
+                    anyhow::bail!(
+                        "error: attempted to read patterns from stdin \
+                         while also searching stdin",
+                    );
+                }
+                paths.push(path);
             }
-            paths.push(path);
         }
         log::debug!("number of paths given to search: {}", paths.len());
         if !paths.is_empty() {
@@ -1173,6 +1182,124 @@ impl Paths {
     fn is_only_stdin(&self) -> bool {
         self.paths.len() == 1 && self.paths[0] == Path::new("-")
     }
+}
+
+/// Expand a single-star path expression before directory traversal.
+///
+/// Shells on Unix commonly expand path globs before invoking ripgrep, while
+/// Windows shells generally pass the token through unchanged. Performing the
+/// expansion at the typed path boundary gives both platforms the same input
+/// semantics without treating regex patterns as paths. A non-matching glob is
+/// preserved so ripgrep can report its normal path error.
+fn expand_path_glob(path: &Path, cwd: &Path) -> Vec<PathBuf> {
+    let text = path.as_os_str().to_string_lossy();
+    if !text.contains('*') || text.contains("**") {
+        return vec![path.to_path_buf()];
+    }
+    let components = path.components().collect::<Vec<_>>();
+    let mut expanded = Vec::new();
+    expand_path_components(PathBuf::new(), &components, cwd, &mut expanded);
+    if expanded.is_empty() {
+        return vec![path.to_path_buf()];
+    }
+    expanded.sort_by(|left, right| {
+        left.to_string_lossy().cmp(&right.to_string_lossy())
+    });
+    expanded
+}
+
+fn expand_path_components(
+    base: PathBuf,
+    components: &[Component<'_>],
+    cwd: &Path,
+    output: &mut Vec<PathBuf>,
+) {
+    let Some((component, rest)) = components.split_first() else {
+        output.push(base);
+        return;
+    };
+    match component {
+        Component::Prefix(prefix) => expand_path_components(
+            base.join(prefix.as_os_str()),
+            rest,
+            cwd,
+            output,
+        ),
+        Component::RootDir => expand_path_components(
+            base.join(component.as_os_str()),
+            rest,
+            cwd,
+            output,
+        ),
+        Component::CurDir => expand_path_components(base, rest, cwd, output),
+        Component::ParentDir => expand_path_components(
+            base.join(component.as_os_str()),
+            rest,
+            cwd,
+            output,
+        ),
+        Component::Normal(name) if name.to_string_lossy().contains('*') => {
+            let read_base = if base.as_os_str().is_empty() {
+                cwd.to_path_buf()
+            } else if base.is_absolute() {
+                base.clone()
+            } else {
+                cwd.join(&base)
+            };
+            let Ok(entries) = fs::read_dir(read_base) else { return };
+            let pattern = name.to_string_lossy();
+            let starts_dot = pattern.starts_with('.');
+            for entry in entries.flatten() {
+                let filename = entry.file_name();
+                let filename_text = filename.to_string_lossy();
+                if !starts_dot && filename_text.starts_with('.') {
+                    continue;
+                }
+                if wildcard_match(&pattern, &filename_text) {
+                    expand_path_components(
+                        base.join(filename),
+                        rest,
+                        cwd,
+                        output,
+                    );
+                }
+            }
+        }
+        Component::Normal(name) => {
+            expand_path_components(base.join(name), rest, cwd, output)
+        }
+    }
+}
+
+fn wildcard_match(pattern: &str, candidate: &str) -> bool {
+    let (mut pattern_index, mut candidate_index, mut star, mut mark) =
+        (0usize, 0usize, None, 0usize);
+    let pattern = pattern.as_bytes();
+    let candidate = candidate.as_bytes();
+    while candidate_index < candidate.len() {
+        if pattern_index < pattern.len()
+            && pattern[pattern_index] == candidate[candidate_index]
+        {
+            pattern_index += 1;
+            candidate_index += 1;
+        } else if pattern_index < pattern.len()
+            && pattern[pattern_index] == b'*'
+        {
+            star = Some(pattern_index);
+            pattern_index += 1;
+            mark = candidate_index;
+        } else if let Some(star_index) = star {
+            pattern_index = star_index + 1;
+            mark += 1;
+            candidate_index = mark;
+        } else {
+            return false;
+        }
+    }
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
 }
 
 /// The "binary detection" configuration that ripgrep should use.

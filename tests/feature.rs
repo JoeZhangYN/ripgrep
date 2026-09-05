@@ -1,6 +1,66 @@
 use crate::hay::{SHERLOCK, SHERLOCK_CRLF};
 use crate::util::{Dir, TestCommand, sort_lines};
 
+// Personal distribution dogfood: path globs are expanded at the typed path
+// boundary, so Windows receives the same `*.rs` behavior as Unix shells.
+rgtest!(personal_path_glob_expansion, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("alpha.rs", "needle\n");
+    dir.create("beta.rs", "needle\n");
+    dir.create("gamma.txt", "needle\n");
+
+    let got = cmd.arg("-j1").arg("-n").arg("needle").arg("*.rs").stdout();
+    assert!(got.contains("alpha.rs"), "glob did not select alpha.rs: {got:?}");
+    assert!(got.contains("beta.rs"), "glob did not select beta.rs: {got:?}");
+    assert!(
+        !got.contains("gamma.txt"),
+        "glob selected a non-rs path: {got:?}"
+    );
+});
+
+// Regex selector tokens remain regex input while the path token is expanded.
+rgtest!(
+    personal_selector_tokens_with_glob,
+    |dir: Dir, mut cmd: TestCommand| {
+        dir.create("alpha.rs", "needle target\n");
+        dir.create("beta.rs", "other\n");
+
+        let got = cmd
+            .arg("-j1")
+            .arg("-n")
+            .arg("(needle|target.*)")
+            .arg("*.rs")
+            .stdout();
+        assert!(
+            got.contains("alpha.rs"),
+            "selector/glob query missed alpha.rs: {got:?}"
+        );
+        assert!(
+            !got.contains("beta.rs"),
+            "selector/glob query matched beta.rs: {got:?}"
+        );
+    }
+);
+
+#[cfg(feature = "personal-default-heading")]
+rgtest!(personal_default_heading, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("alpha.rs", "needle\n");
+    dir.create("beta.rs", "needle\n");
+
+    let got = cmd.arg("-j1").arg("-n").arg("needle").arg("*.rs").stdout();
+    assert!(
+        got.contains("alpha.rs\n1:needle\n"),
+        "missing grouped alpha heading: {got:?}"
+    );
+    assert!(
+        got.contains("beta.rs\n1:needle\n"),
+        "missing grouped beta heading: {got:?}"
+    );
+    assert!(
+        !got.contains("alpha.rs:1:needle"),
+        "repeated path prefix remains: {got:?}"
+    );
+});
+
 // See: https://github.com/BurntSushi/ripgrep/issues/1
 rgtest!(f1_sjis, |dir: Dir, mut cmd: TestCommand| {
     dir.create_bytes(
