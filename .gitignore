@@ -23,3 +23,6 @@ cargo-timing.html
 
 # ripgrep index
 .ripgrep
+
+# Codex bounded runtime receipts and fixtures are ephemeral projections.
+/.codex/tmp/
