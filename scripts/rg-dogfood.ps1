@@ -1,10 +1,14 @@
 [CmdletBinding()]
 param(
-    [string] $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
+    [string] $RepositoryRoot = '',
     [string] $Receipt = ''
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+    $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $RepositoryRoot = Join-Path $scriptRoot '..'
+}
 $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 if ([string]::IsNullOrWhiteSpace($Receipt)) {
     $Receipt = Join-Path $RepositoryRoot '.codex\tmp\rg-dogfood\result.json'
