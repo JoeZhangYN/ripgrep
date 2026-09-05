@@ -46,7 +46,13 @@ rgtest!(personal_default_heading, |dir: Dir, mut cmd: TestCommand| {
     dir.create("alpha.rs", "needle\n");
     dir.create("beta.rs", "needle\n");
 
-    let got = cmd.arg("-j1").arg("-n").arg("needle").arg("*.rs").stdout();
+    let got = cmd
+        .arg("--heading")
+        .arg("-j1")
+        .arg("-n")
+        .arg("needle")
+        .arg("*.rs")
+        .stdout();
     assert!(
         got.contains("alpha.rs\n1:needle\n"),
         "missing grouped alpha heading: {got:?}"

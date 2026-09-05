@@ -169,6 +169,11 @@ impl Dir {
         cmd.env_remove("RIPGREP_CONFIG_PATH");
         cmd.current_dir(&self.dir);
         cmd.arg("--path-separator").arg("/");
+        // Keep the upstream integration corpus stable when the personal
+        // default-heading feature is enabled. Tests that exercise the
+        // personal default pass `--heading` explicitly.
+        #[cfg(feature = "personal-default-heading")]
+        cmd.arg("--no-heading");
         if self.is_pcre2() {
             cmd.arg("--pcre2");
         }
