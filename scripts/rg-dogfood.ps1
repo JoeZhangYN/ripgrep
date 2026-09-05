@@ -32,6 +32,42 @@ if ($LASTEXITCODE -ne 0) { throw 'Linux Docker dogfood failed' }
 
 $windows = Get-Content -Raw -LiteralPath $windowsReceipt | ConvertFrom-Json
 $linux = Get-Content -Raw -LiteralPath $linuxReceipt | ConvertFrom-Json
+$project = 'project.ripgrep.personal'
+$partition = 'partition.personal-dogfood'
+$runtimeEvidence = @(
+    [ordered]@{
+        gate_ref = 'runtime.dogfood'
+        project = $project
+        partition = $partition
+        source_revision = $revision
+        terminal = 'Candidate'
+        source_receipts = @($windowsReceipt, $linuxReceipt)
+    },
+    [ordered]@{
+        gate_ref = 'runtime.owner-admission'
+        project = $project
+        partition = $partition
+        source_revision = $revision
+        terminal = 'Unknown'
+        first_mismatch = 'Owner admission receipt was not supplied by the dogfood runner.'
+    },
+    [ordered]@{
+        gate_ref = 'runtime.consumer-session'
+        project = $project
+        partition = $partition
+        source_revision = $revision
+        terminal = 'Unknown'
+        first_mismatch = 'External semantic-consumer session receipt was not supplied by the dogfood runner.'
+    },
+    [ordered]@{
+        gate_ref = 'runtime.install-target'
+        project = $project
+        partition = $partition
+        source_revision = $revision
+        terminal = 'Unknown'
+        first_mismatch = 'Installation target readback was not supplied by the dogfood runner.'
+    }
+)
 $combined = [ordered]@{
     schema = 'ripgrep.personal-dogfood-receipt.v1'
     source_revision = $revision
@@ -46,6 +82,7 @@ $combined = [ordered]@{
     goal = $false
     freshness = 'freshness.ripgrep.personal-dogfood.v1'
     invalidation = 'invalidation.ripgrep.personal-dogfood-source-or-binary-revision.v1'
+    runtime_evidence = $runtimeEvidence
     FirstMismatch = 'Programmatic cross-platform dogfood passed; canonical semantic consumer, install target and Owner admission remain separate gates.'
     NextBoundedQuery = 'Join this receipt with semantic-storage durable revision, semantic-consumer ack, and installation target readback.'
     ParentJoinTarget = '/root'
