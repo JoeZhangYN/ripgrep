@@ -4,6 +4,7 @@ param(
     [string] $Image = 'rust:1.98.0-bookworm',
     [string] $ImageDigest = 'sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922',
     [string] $Target = 'x86_64-unknown-linux-gnu',
+    [string] $RustToolchain = '1.98.1-x86_64-unknown-linux-gnu',
     [string] $Receipt = ''
 )
 
@@ -33,7 +34,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceRevision)) {
 $mount = "$RepositoryRoot`:/src"
 $targetDir = '/src/target/docker-' + $targetSlug
 $binaryInContainer = "$targetDir/$Target/release/rg"
-$buildScript = "set -e; cargo build --manifest-path /src/Cargo.toml --release --features personal-default-heading --target $Target; $binaryInContainer --version"
+$buildScript = "set -e; rustup toolchain install $RustToolchain --profile minimal --no-self-update; cargo +$RustToolchain build --manifest-path /src/Cargo.toml --release --features personal-default-heading --target $Target; $binaryInContainer --version"
 & docker run --rm -v $mount -w /src -e "CARGO_TARGET_DIR=$targetDir" "$expectedDigest" bash -c $buildScript
 if ($LASTEXITCODE -ne 0) { throw 'Docker Linux release build failed' }
 
@@ -48,6 +49,7 @@ $receiptObject = [ordered]@{
     image = $Image
     image_digest = $ImageDigest
     target = $Target
+    rust_toolchain = $RustToolchain
     source_revision = $sourceRevision
     binary = $binary
     binary_digest_sha256 = $binaryHash
