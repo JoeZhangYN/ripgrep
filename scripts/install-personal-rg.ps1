@@ -1,90 +1,80 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string] $Source,
-    [Parameter(Mandatory = $true)]
-    [string[]] $Target,
-    [Parameter(Mandatory = $true)]
-    [string] $BackupDirectory,
-    [Parameter(Mandatory = $true)]
-    [string] $Receipt,
-    [Parameter(Mandatory = $true)]
-    [string] $Revision
+    [string] $Binary,
+    [string] $Target = '',
+    [string] $Receipt = ''
 )
 
 $ErrorActionPreference = 'Stop'
-
-function Get-AbsoluteFile([string] $Path) {
-    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
-    $item = Get-Item -LiteralPath $resolved.Path
-    if (-not $item.PSIsContainer -and $item.Exists) {
-        return $item
-    }
-    throw "expected an existing file: $Path"
+$source = (Resolve-Path -LiteralPath $Binary).Path
+if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+    throw "source binary is not a file: $source"
+}
+if ([string]::IsNullOrWhiteSpace($Target)) {
+    $Target = (Get-Command rg -ErrorAction Stop).Source
+}
+$targetPath = (Resolve-Path -LiteralPath $Target).Path
+if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
+    throw "target binary is not a file: $targetPath"
+}
+if ([StringComparer]::OrdinalIgnoreCase.Equals($source, $targetPath)) {
+    throw 'source and target must be distinct files'
 }
 
-$sourceItem = Get-AbsoluteFile $Source
-$sourcePath = $sourceItem.FullName
-$sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($Target.Count -eq 0) { throw 'at least one target is required' }
-if ([string]::IsNullOrWhiteSpace($Revision)) { throw 'revision is required' }
+$sourceDigest = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+$targetDigest = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$backupPath = "$targetPath.native-backup"
+$previousBackupPath = $null
+$effect = $false
+$terminal = 'AlreadyCurrent'
 
-New-Item -ItemType Directory -Force -Path $BackupDirectory | Out-Null
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Receipt) | Out-Null
-$backupRoot = (Resolve-Path -LiteralPath $BackupDirectory).Path
-$readbacks = @()
-$backups = @()
-
-foreach ($targetValue in $Target) {
-    $targetItem = Get-AbsoluteFile $targetValue
-    $targetPath = $targetItem.FullName
-    if ([IO.Path]::GetFileName($targetPath) -ne 'rg.exe') {
-        throw "target is not an exact rg.exe path: $targetPath"
+if ($sourceDigest -ne $targetDigest) {
+    if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
+        $suffix = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
+        $previousBackupPath = "$targetPath.native-backup.previous-$suffix"
+        Copy-Item -LiteralPath $backupPath -Destination $previousBackupPath -Force
     }
-    if ($targetPath -eq $sourcePath) {
-        throw "source and target must be distinct: $targetPath"
-    }
-
-    $targetKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($targetPath))).ToLowerInvariant().Substring(0, 16)
-    $backupPath = Join-Path $backupRoot ("rg.exe.personal-before-$targetKey.exe")
     Copy-Item -LiteralPath $targetPath -Destination $backupPath -Force
-    $tempPath = "$targetPath.personal-install-$PID.tmp"
-    try {
-        Copy-Item -LiteralPath $sourcePath -Destination $tempPath -Force
-        Move-Item -LiteralPath $tempPath -Destination $targetPath -Force
-    } finally {
-        if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force }
-    }
+    Copy-Item -LiteralPath $source -Destination $targetPath -Force
+    $effect = $true
+    $terminal = 'Current'
+}
 
-    $installedItem = Get-AbsoluteFile $targetPath
-    $installedHash = (Get-FileHash -LiteralPath $installedItem.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    $readbacks += [ordered]@{
-        target = $installedItem.FullName
-        source_digest_sha256 = $sourceHash
-        installed_digest_sha256 = $installedHash
-        matching = ($installedHash -eq $sourceHash)
-        length = $installedItem.Length
-    }
-    $backups += $backupPath
+$readbackDigest = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($readbackDigest -ne $sourceDigest) {
+    throw "target digest readback differs from source: expected $sourceDigest, observed $readbackDigest"
 }
 
 $receiptObject = [ordered]@{
-    schema = 'ripgrep.personal-native-install-receipt.v1'
-    revision = $Revision
-    source = $sourcePath
-    source_digest_sha256 = $sourceHash
-    targets = $readbacks
-    backups = $backups
-    effect = $true
-    current = $false
+    schema = 'ripgrep.personal-install-receipt.v1'
+    source = $source
+    source_digest_sha256 = $sourceDigest
+    target = $targetPath
+    target_digest_sha256 = $readbackDigest
+    backup = if (Test-Path -LiteralPath $backupPath -PathType Leaf) { $backupPath } else { $null }
+    previous_backup = $previousBackupPath
+    terminal = $terminal
+    effect = $effect
+    write = $effect
+    current = $true
     semantic_current = $false
-    status = 'Candidate'
-    freshness = 'freshness.ripgrep.personal-native-install.v1'
-    invalidation = 'invalidation.ripgrep.personal-native-commit.v1'
-    reader_zero = 'Unknown'
-    writer_zero = 'Unknown'
-    route_zero = 'Unknown'
+    publish = $false
+    retire = $false
+    goal = $false
+    freshness = 'freshness.ripgrep.personal-install.v1'
+    invalidation = 'invalidation.ripgrep.personal-install-source-or-target-digest.v1'
+    FirstMismatch = if ($effect) { $null } else { 'target already matches source digest' }
+    NextBoundedQuery = $null
+    ParentJoinTarget = '/root'
     retention = 'DurableUntilParentConsumption'
 }
-$receiptObject | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Receipt -Encoding UTF8
-Write-Output ($receiptObject | ConvertTo-Json -Depth 8)
+$json = $receiptObject | ConvertTo-Json -Depth 8
+if (-not [string]::IsNullOrWhiteSpace($Receipt)) {
+    $receiptParent = Split-Path -Parent $Receipt
+    New-Item -ItemType Directory -Force -Path $receiptParent | Out-Null
+    $json | Set-Content -LiteralPath $Receipt -Encoding utf8
+    (Get-FileHash -LiteralPath $Receipt -Algorithm SHA256).Hash.ToLowerInvariant() |
+        Set-Content -LiteralPath ($Receipt + '.sha256') -Encoding ascii
+}
+Write-Output $json
