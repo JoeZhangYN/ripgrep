@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string] $RepositoryRoot = '',
-    [string] $Receipt = ''
+    [string] $Receipt = '',
+    [string] $InstallTarget = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,6 +35,17 @@ $windows = Get-Content -Raw -LiteralPath $windowsReceipt | ConvertFrom-Json
 $linux = Get-Content -Raw -LiteralPath $linuxReceipt | ConvertFrom-Json
 $project = 'project.ripgrep.personal'
 $partition = 'partition.personal-dogfood'
+$installReadback = $null
+$installTerminal = 'Unknown'
+$installMismatch = 'Installation target was not supplied for readback.'
+if (-not [string]::IsNullOrWhiteSpace($InstallTarget)) {
+    $resolvedInstallTarget = (Resolve-Path -LiteralPath $InstallTarget).Path
+    $installedDigest = (Get-FileHash -LiteralPath $resolvedInstallTarget -Algorithm SHA256).Hash.ToLowerInvariant()
+    $forkDigest = (Get-FileHash -LiteralPath (Join-Path $RepositoryRoot 'target\release\rg.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $installTerminal = if ($installedDigest -eq $forkDigest) { 'Current' } else { 'Blocked' }
+    $installMismatch = if ($installTerminal -eq 'Current') { $null } else { 'Installation target digest differs from fork release binary.' }
+    $installReadback = [ordered]@{ path = $resolvedInstallTarget; binary_digest_sha256 = $installedDigest; source_binary_digest_sha256 = $forkDigest; terminal = $installTerminal }
+}
 $runtimeEvidence = @(
     [ordered]@{
         gate_ref = 'runtime.dogfood'
@@ -64,8 +76,8 @@ $runtimeEvidence = @(
         project = $project
         partition = $partition
         source_revision = $revision
-        terminal = 'Unknown'
-        first_mismatch = 'Installation target readback was not supplied by the dogfood runner.'
+        terminal = $installTerminal
+        first_mismatch = $installMismatch
     }
 )
 $combined = [ordered]@{
@@ -74,6 +86,7 @@ $combined = [ordered]@{
     binary = (Join-Path $RepositoryRoot 'target\release\rg.exe')
     windows = $windows
     linux = $linux
+    install_target = $installReadback
     effect = $false
     current = $false
     semantic_current = $false
