@@ -11,12 +11,18 @@ $source = (Resolve-Path -LiteralPath $Binary -ErrorAction Stop).Path
 if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
     throw "source binary is not a file: $source"
 }
+if ((Split-Path -Leaf $source) -notin @('rg', 'rg.exe')) {
+    throw "source binary must be named rg or rg.exe: $source"
+}
 if ([string]::IsNullOrWhiteSpace($Target)) {
     $Target = (Get-Command rg -ErrorAction Stop).Source
 }
 $targetPath = (Resolve-Path -LiteralPath $Target -ErrorAction Stop).Path
 if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
     throw "target binary is not a file: $targetPath"
+}
+if ((Split-Path -Leaf $targetPath) -notin @('rg', 'rg.exe')) {
+    throw "target binary must be named rg or rg.exe: $targetPath"
 }
 if ([StringComparer]::OrdinalIgnoreCase.Equals($source, $targetPath)) {
     throw 'source and target must be distinct files'
